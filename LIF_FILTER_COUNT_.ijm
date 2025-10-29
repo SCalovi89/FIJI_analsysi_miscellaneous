@@ -39,7 +39,12 @@ print("Found " + seriesCount + " image series in file.");
 
 // --- loop over series ---
 for (i = 0; i < seriesCount; i++) {
+	setBatchMode(false);
 	run("Close All");
+	// Initialize CLIJ2 only once
+	run("CLIJ2 Macro Extensions", "cl_device=[NVIDIA GeForce RTX 3060]");
+	Ext.CLIJ2_clear();
+
     // get series name (0-based)
     seriesName = seriesNames[i];
 	seriesName_lc = toLowerCase(seriesName);
@@ -110,6 +115,9 @@ for (i = 0; i < seriesCount; i++) {
 
     // loop over each ROI to be drawn
     for (r = 1; r <= roi_to_cycle; r++) {
+		run("CLIJ2 Macro Extensions", "cl_device=[NVIDIA GeForce RTX 3060]");
+		Ext.CLIJ2_clear();
+    	
     	selectImage("anal_");
         waitForUser("Draw ROI #" + r + " then click OK");
 
@@ -143,11 +151,33 @@ for (i = 0; i < seriesCount; i++) {
 		//print(vol_roi);
 		run("Clear Results");
 
-		//////////counting cells
-		dapi = counting_cells("C1-anal_sm");
-		c2_count = counting_cells("C2-anal_sm");
-		c3_count = counting_cells("C3-anal_sm");
+		//////////counting cells///////////////////////////////////////////////////////
+		dapi = counting_dapi("C1-anal_sm");
+		selectImage("Label Image");
+		rename("dapi_label");
+		run("CLIJ2 Macro Extensions", "cl_device=[NVIDIA GeForce RTX 3060]");
+		Ext.CLIJ2_clear();
 
+		c2_count = counting_cells("C2-anal_sm");
+		selectImage("Label Image");
+		rename("c2_label");
+		run("CLIJ2 Macro Extensions", "cl_device=[NVIDIA GeForce RTX 3060]");
+		Ext.CLIJ2_clear();
+
+		c3_count = counting_cells("C3-anal_sm");
+		selectImage("Label Image");
+		rename("c3_label");
+		run("CLIJ2 Macro Extensions", "cl_device=[NVIDIA GeForce RTX 3060]");
+		Ext.CLIJ2_clear();
+		
+		run("Merge Channels...", "c1=c2_label c2=c3_label c3=dapi_label create");
+		selectImage("Composite");
+		//rename(title+"_counting");
+		//waitForUser("I WILL PRINT THIS COUNTING AND THROW IT, if not ok appoint it on paper");
+		selectImage("Composite");
+		saveAs("Tiff", "D:/Stefano/gfpANDcno_issue/2022_apc_gfp/counting/"+title+"_"+sub_area+"_result.tif");
+		close;
+		
 		//print in specific place
 		// === Append one row for this iteration ===
 		row = Table.size("CellCOUNT_results"); // next free row index
@@ -178,30 +208,33 @@ print("finished all the files!");
 
 
 
-///////////////////////////////////////////////////counting cells;
-
-function counting_cells(image) { 
+/////////////////////////////////////////////////////////
+function counting_cells(image) {
+	setBatchMode(true);
 	selectImage(image);
-
-	run("CLIJ2 Macro Extensions", "cl_device=[NVIDIA GeForce RTX 3060]");
+	//run("CLIJ2 Macro Extensions", "cl_device=[NVIDIA GeForce RTX 3060]");
 
 	// extended depth of focus sobel projection
-	image4 = image;
-	Ext.CLIJ2_push(image4);
-	image5 = "extended_1";
+	image1 = image;
+	Ext.CLIJ2_push(image1);
+	image2 = "extended_1";
 	sigma = 10.0;
-	Ext.CLIJ2_extendedDepthOfFocusSobelProjection(image4, image5, sigma);
-	Ext.CLIJ2_pull(image5);
+	Ext.CLIJ2_extendedDepthOfFocusSobelProjection(image1, image2, sigma);
+	Ext.CLIJ2_pull(image2);
+
 	////
 	run("Command From Macro", "command=[de.csbdresden.stardist.StarDist2D], args=['input':'extended_1', 'modelChoice':'Versatile (fluorescent nuclei)', 'normalizeInput':'true', 'percentileBottom':'1.0', 'percentileTop':'99.8', 'probThresh':'0.479071', 'nmsThresh':'0.3', 'outputType':'Both', 'nTiles':'1', 'excludeBoundary':'2', 'roiPosition':'Automatic', 'verbose':'false', 'showCsbdeepProgress':'false', 'showProbAndDist':'false'], process=[false]");
+
 	selectImage("Label Image");
-	close;
-	
+	setAutoThreshold("Default dark no-reset");
+	setThreshold(1, 65535, "raw");
+	setOption("BlackBackground", true);
+	run("Convert to Mask");
 	////////////LOOP THROUGH ROI MANAGER TO EXCLUDE FALSE POSITIVE
 
 	// Set initial parameters (opixels
-	minimum_size = 20;
-	maximum_size = 500;
+	minimum_size = 28;
+	maximum_size = 280;
 	min_circ = 0.5;
 	cf_BG = 0; //insert the background value (suggestion: in 8-bit) of the cfos staining.
 	run("Set Measurements...", "area mean shape display redirect=None decimal=3");
@@ -209,16 +242,24 @@ function counting_cells(image) {
 	// Initialize arrays to hold indices of ROIs to be deleted
 	to_be_deleted = newArray();
 
-	n_rois = roiManager("count");
+	if (roiManager("count")==0) {
+		n_rois = 0;
+	} else {	
+		n_rois = roiManager("count");
+	}
 
 	// Loop through each ROI
 	for (j = 0; j < n_rois; j++) {
+		selectImage(image);
 	    roiManager("Select", j);
 	    
 	    // Check size condition
 	    getRawStatistics(nPixels, mean, min, max, std, histogram);
 	    if (nPixels <= minimum_size || nPixels > maximum_size) {
 	        to_be_deleted = Array.concat(to_be_deleted, j);
+        	selectImage("Label Image");
+        	roiManager("Select", j);
+			run("Clear", "slice");
 	        continue; // Skip further checks for this ROI if size condition is met
 	    }
     
@@ -227,6 +268,9 @@ function counting_cells(image) {
 	    circ = getResult("Circ.");
 	    if (circ <= min_circ) {
 	        to_be_deleted = Array.concat(to_be_deleted, j);
+	        selectImage("Label Image");
+	        roiManager("Select", j);
+			run("Clear", "slice");
 	        continue; // Skip further checks for this ROI if circularity condition is met
 	    }
 	    
@@ -249,4 +293,89 @@ function counting_cells(image) {
 }
 ////////////////////////////////////////////
 
+/////////////////////////////////////////////////////////
+function counting_dapi(image) {
+	setBatchMode(true);
+	selectImage(image);
+	//run("CLIJ2 Macro Extensions", "cl_device=[NVIDIA GeForce RTX 3060]");
+
+	// extended depth of focus sobel projection
+	image1 = image;
+	Ext.CLIJ2_push(image1);
+	image2 = "extended_1";
+	sigma = 10.0;
+	Ext.CLIJ2_extendedDepthOfFocusSobelProjection(image1, image2, sigma);
+	Ext.CLIJ2_pull(image2);
+
+	////
+	run("Command From Macro", "command=[de.csbdresden.stardist.StarDist2D], args=['input':'extended_1', 'modelChoice':'Versatile (fluorescent nuclei)', 'normalizeInput':'true', 'percentileBottom':'1.0', 'percentileTop':'99.8', 'probThresh':'0.479071', 'nmsThresh':'0.3', 'outputType':'Both', 'nTiles':'1', 'excludeBoundary':'2', 'roiPosition':'Automatic', 'verbose':'false', 'showCsbdeepProgress':'false', 'showProbAndDist':'false'], process=[false]");
+
+	selectImage("Label Image");
+	setAutoThreshold("Default dark no-reset");
+	setThreshold(1, 65535, "raw");
+	setOption("BlackBackground", true);
+	run("Convert to Mask");
+	////////////LOOP THROUGH ROI MANAGER TO EXCLUDE FALSE POSITIVE
+
+	// Set initial parameters (opixels
+	minimum_size = 35;
+	maximum_size = 400;
+	min_circ = 0.5;
+	cf_BG = 0; //insert the background value (suggestion: in 8-bit) of the cfos staining.
+	run("Set Measurements...", "area mean shape display redirect=None decimal=3");
+
+	// Initialize arrays to hold indices of ROIs to be deleted
+	to_be_deleted = newArray();
+
+	if (roiManager("count")==0) {
+		n_rois = 0;
+	} else {	
+		n_rois = roiManager("count");
+	}
+
+	// Loop through each ROI
+	for (j = 0; j < n_rois; j++) {
+		selectImage(image);
+	    roiManager("Select", j);
+	    
+	    // Check size condition
+	    getRawStatistics(nPixels, mean, min, max, std, histogram);
+	    if (nPixels <= minimum_size || nPixels > maximum_size) {
+	        to_be_deleted = Array.concat(to_be_deleted, j);
+        	selectImage("Label Image");
+        	roiManager("Select", j);
+			run("Clear", "slice");
+	        continue; // Skip further checks for this ROI if size condition is met
+	    }
+    
+    	// Check circularity condition
+	    run("Measure");
+	    circ = getResult("Circ.");
+	    if (circ <= min_circ) {
+	        to_be_deleted = Array.concat(to_be_deleted, j);
+	        selectImage("Label Image");
+	        roiManager("Select", j);
+			run("Clear", "slice");
+	        continue; // Skip further checks for this ROI if circularity condition is met
+	    }
+	    
+		run("Clear Results");
+	}
+
+	// Delete all ROIs that failed any of the conditions
+	roiManager("Select", to_be_deleted);
+	roiManager("Delete");
+	run("Clear Results");
+	selectImage("extended_1");
+	close;
+	if (roiManager("count")==0) {
+		fin_counting = 0;
+	} else {	
+		fin_counting = roiManager("count");
+		roiManager("reset");
+	}	
+	
+	return fin_counting;
+}
+////////////////////////////////////////////
 
