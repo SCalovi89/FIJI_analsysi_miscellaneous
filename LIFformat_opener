@@ -1,0 +1,23 @@
+//Author: S. Calovi, 291025
+//open .lif file list, one by one file
+// prompt the .lif file
+lifPath = File.openDialog("Select .lif file");
+
+// Get series count using Bio-Formats
+run("Bio-Formats Macro Extensions");
+Ext.setId(lifPath);
+Ext.getSeriesCount(seriesCount);
+print("Found " + seriesCount + " image series in file.");
+
+// Loop through all series
+for (i = 0; i < seriesCount; i++) {
+    print("Opening series " + i);
+    run("Bio-Formats Importer", "open=[" + lifPath + "] autoscale color_mode=Default view=Hyperstack stack_order=XYCZT series_" + i);
+    
+    // Do your processing here, e.g.:
+    run("Z Project...", "projection=[Max Intensity]");
+    // saveAs("Tiff", lifPath + "_series" + i + ".tif");
+    
+waitForUser("?");
+    close(); // close after done
+}
